@@ -27,8 +27,10 @@ def is_expression(tok: Token):
         TokType.lparanthesis,
         TokType.rparanthesis}
 
+
 def translate_opcode(operator: TokType):
     return {TokType.plus: "add", TokType.minus: "sub", TokType.star: "mul", TokType.slash: "div"}[operator]
+
 
 class Instruction:
     def __init__(self, opcode: str, *args):
@@ -61,9 +63,14 @@ class Codegen:
     def tok_value(self, tok: Token) -> str:
         return self.code[tok.start:tok.end]
 
-    def expect(self, tok_type):
+    def expect(self, tok_type: TokType):
         if self.get_tok().type != tok_type:
             raise Exception(f'Expected {tok_type}, got {self.get_tok().type}')
+
+    def expect_take(self, tok_type: TokType):
+        if self.get_tok().type != tok_type:
+            raise Exception(f'Expected {tok_type}, got {self.get_tok().type}')
+        self.take_tok()
 
     def get_temp_variable(self):
         var_name = f't{self.var_counter}'
@@ -80,81 +87,53 @@ class Codegen:
         self.expect(TokType.rsquare_brace)
         self.take_tok()
 
+    def translate_conditional_body(self, inverse_condition):
+        self.instructions.append(
+            Instruction('gotoif' if inverse_condition else 'gotoifnot', f't{self.var_counter - 1}', 0))
+        goto_ins = self.instructions[-1]
+        self.expect_take(TokType.lcurly_brace)
+        self.translate_stmt()
+        self.expect_take(TokType.rcurly_brace)
+        goto_ins.args[1] = len(self.instructions) + 1
+
+    def translate_loop(self, inverse_condition: bool):
+        self.translate_condition()
+        loop_start = len(self.instructions) - 1
+        self.translate_conditional_body(inverse_condition)
+        self.instructions.append(Instruction('goto', loop_start))
+
+    def translate_if(self, inverse_condition: bool):
+        self.translate_condition()
+        self.translate_conditional_body(inverse_condition)
+
     def translate_stmt(self):
-        while self.has_tokens() and self.get_tok().type != TokType.rcurly_brace and self.get_tok().type != TokType.semicolon:
-            tok = self.get_tok()
-            tok_value = self.tok_value(tok)
+        while self.has_tokens() and self.get_tok().type not in {TokType.rcurly_brace, TokType.semicolon}:
             self.expect(TokType.ident)
+            tok = self.take_tok()
+            tok_value = self.tok_value(tok)
             if tok_value in {'write', 'read'}:
-                self.take_tok()
-                self.expect(TokType.rangle_brace)
-                self.take_tok()
+                self.expect_take(TokType.rangle_brace)
                 literal = self.take_tok()
-                self.expect(TokType.semicolon)
-                self.take_tok()
+                self.expect_take(TokType.semicolon)
                 self.instructions.append(Instruction(tok_value, self.tok_value(literal)))
             elif tok_value == 'if':
-                self.take_tok()
-                self.translate_condition()
-                self.instructions.append(Instruction('gotoifnot', f't{self.var_counter-1}', 0))
-                goto_ins = self.instructions[-1]
-                self.expect(TokType.lcurly_brace)
-                self.take_tok()
-                self.translate_stmt()
-                self.expect(TokType.rcurly_brace)
-                self.take_tok()
-                goto_ins.args[1] = len(self.instructions)
+                self.translate_if(False)
             elif tok_value == 'ifnot':
-                self.take_tok()
-                self.translate_condition()
-                self.instructions.append(Instruction('gotoif', f't{self.var_counter-1}', 0))
-                goto_ins = self.instructions[-1]
-                self.expect(TokType.lcurly_brace)
-                self.take_tok()
-                self.translate_stmt()
-                self.expect(TokType.rcurly_brace)
-                self.take_tok()
-                goto_ins.args[1] = len(self.instructions)
+                self.translate_if(True)
             elif tok_value == 'while':
-                self.take_tok()
-                self.translate_condition()
-                loop_start = len(self.instructions)-1
-                self.instructions.append(Instruction('gotoifnot', f't{self.var_counter-1}', 0))
-                goto_ins = self.instructions[-1]
-                self.expect(TokType.lcurly_brace)
-                self.take_tok()
-                self.translate_stmt()
-                self.expect(TokType.rcurly_brace)
-                self.take_tok()
-                goto_ins.args[1] = len(self.instructions)+1
-                self.instructions.append(Instruction('goto', loop_start))
+                self.translate_loop(False)
             elif tok_value == 'whilenot':
-                self.take_tok()
-                self.translate_condition()
-                loop_start = len(self.instructions)-1
-                self.instructions.append(Instruction('gotoif', f't{self.var_counter-1}', 0))
-                goto_ins = self.instructions[-1]
-                self.expect(TokType.lcurly_brace)
-                self.take_tok()
-                self.translate_stmt()
-                self.expect(TokType.rcurly_brace)
-                self.take_tok()
-                goto_ins.args[1] = len(self.instructions)+1
-                self.instructions.append(Instruction('goto', loop_start))
+                self.translate_loop(True)
+            elif self.take_tok().type == TokType.equal:
+                self.translate_expression()
+                self.instructions.append(Instruction('copy', f't{self.var_counter - 1}', tok_value))
+                self.expect_take(TokType.semicolon)
             else:
-                self.take_tok()
-                if self.take_tok().type == TokType.equal:
-                    self.translate_expression()
-                    self.instructions.append(Instruction('copy', f't{self.var_counter-1}', self.tok_value(tok)))
-                    self.expect(TokType.semicolon)
-                    self.take_tok()
-                else:
-                    raise Exception("Expected equal, got " + str(self.take_tok().type))
+                raise Exception("Expected keyword, got " + str(self.take_tok().type))
 
     def translate(self):
         while self.has_tokens():
             self.translate_stmt()
-
 
     def translate_expression(self):
         operators = []
@@ -172,7 +151,7 @@ class Codegen:
             op_tok = operators.pop()
 
             if op_tok.type == TokType.unary_minus:
-                operands.append(negate(pop_operand()))  # інструкції немає
+                operands.append(negate(pop_operand()))
                 return
 
             right = pop_operand()
@@ -188,13 +167,10 @@ class Codegen:
 
             if is_value(tok):
                 operands.append(self.tok_value(self.take_tok()))
-
             elif tok.type == TokType.unary_minus:
                 operators.append(self.take_tok())
-
             elif tok.type == TokType.lparanthesis:
                 operators.append(self.take_tok())
-
             elif tok.type == TokType.rparanthesis:
                 self.take_tok()
                 while operators and operators[-1].type != TokType.lparanthesis:
@@ -202,7 +178,6 @@ class Codegen:
                 if not operators:
                     raise Exception("Mismatched parentheses: missing '('")
                 operators.pop()
-
             elif is_operator(tok):
                 prec = get_precedence(tok)
                 while (operators
@@ -210,7 +185,6 @@ class Codegen:
                        and get_precedence(operators[-1]) >= prec):
                     apply_operator()
                 operators.append(self.take_tok())
-
             else:
                 break
 
