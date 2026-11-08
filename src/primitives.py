@@ -14,10 +14,11 @@ class TokType(enum.Enum):
     rangle_brace = 9  # >
     star = 10
     plus = 11
-    minus = 12
-    slash = 13
-    semicolon = 14
-    unknown = 15
+    unary_minus = 12
+    minus = 13
+    slash = 14
+    semicolon = 15
+    unknown = 16
 
 
 class Token:

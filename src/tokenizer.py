@@ -1,9 +1,10 @@
-from token import TokType, Token
+from primitives import TokType, Token
 
 alphabet_lowercase = 'qwertyuiopasdfghjklzxcvbnm'
 alphabet_uppercase = alphabet_lowercase.upper()
 alphabet = alphabet_lowercase + alphabet_uppercase
 numbers = '0123456789'
+
 
 def state_from_char(char: str):
     return {
@@ -47,7 +48,10 @@ class Tokenizer:
                 self.state = TokType.ident
                 self.emit()
             elif source[self.pos] in ';=[]{}()>*/+-':
-                self.state = state_from_char(source[self.pos])
+                if source[self.pos] == '-' and self.state != TokType.ident and self.state != TokType.number:
+                    self.state = TokType.unary_minus
+                else:
+                    self.state = state_from_char(source[self.pos])
                 self.pos += 1
                 self.emit()
             elif source[self.pos] in ' \r\n':
